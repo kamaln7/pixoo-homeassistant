@@ -706,6 +706,69 @@ mode: single
 | eleven_pix | ![eleven_pix.png](images%2Feleven_pix.png) |
 | clock      | ![CLOCK.png](images%2FCLOCK.png)           |
 
+The built-in fonts only contain upper-case glyphs, so text drawn with them is
+upper-cased automatically.
+
+### Custom fonts
+
+Drop a JSON font into the custom font directory (`pixoo_fonts` under your Home
+Assistant config directory by default, changeable per device in the
+integration's options) and use it by filename: `pixoo_fonts/scientifica.json`
+becomes `font: scientifica`. A custom font whose name matches a built-in
+replaces it.
+
+A glyph is a list of rows drawn with `#` for a lit pixel and `.` for an empty
+one, so a font stays readable and editable by hand:
+
+```json
+{
+  "height": 7,
+  "force_uppercase": false,
+  "glyphs": {
+    "A": [".##.",
+          "#..#",
+          "#..#",
+          "####",
+          "#..#",
+          "#..#",
+          "#..#"],
+    "!": ["#", "#", "#", "#", "#", ".", "#"]
+  }
+}
+```
+
+`1`, `X`, `x` and `*` also count as lit and `0` and space as empty. A glyph's
+width is simply how long its rows are, so proportional fonts need no width
+field: `A` above is 4px wide and `!` is 1px.
+
+| Key               | Required | Description                                                                    |
+|-------------------|----------|--------------------------------------------------------------------------------|
+| `glyphs`          |   Yes    | Character to rows mapping. Must include `0`, and should include `?`.            |
+| `height`          |    No    | Cross-checks the rows; the height is taken from the glyphs themselves.          |
+| `force_uppercase` |    No    | `true` for a font with no lower-case glyphs. Defaults to `false`.               |
+
+Every glyph must be the same number of rows tall, because `draw_text` takes its
+line height from the `0` glyph and applies it to every line. `?` is what gets
+drawn in place of any character the font lacks. Fonts are validated when they
+load, and a font that fails validation is skipped with the reason in the log.
+
+#### Converting an existing font
+
+`scripts/font_to_json.py` converts a BDF or TTF into the format above:
+
+```sh
+python3 scripts/font_to_json.py scientifica-11.bdf --trim --out pixoo_fonts/scientifica.json
+python3 scripts/font_to_json.py some-pixel-font.ttf --size 8 --out pixoo_fonts/some.json
+```
+
+BDF is exact, since it already is a bitmap. TTF has to be rasterised, which
+needs Pillow and a `--size` that suits the font: pixel fonts are drawn for one
+specific size and turn to mush at any other. `--trim` drops rows that are blank
+across every glyph, which reclaims the padding a font's cell usually carries.
+Use `--preview` to see a few glyphs as ASCII before writing the file, and
+`--chars` to limit the character set (dropping lower-case descenders often makes
+a font several rows shorter).
+
 
 <br>
 

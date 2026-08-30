@@ -5,7 +5,8 @@ from homeassistant.helpers.selector import ObjectSelector, ObjectSelectorConfig,
     DurationSelector, DurationSelectorConfig, NumberSelector, NumberSelectorConfig, NumberSelectorMode, SelectSelector, \
     SelectSelectorConfig, SelectSelectorMode
 
-from .const import DOMAIN, CURRENT_ENTRY_VERSION
+from .const import DOMAIN
+from .pixoo64._custom_fonts import FONTS_DIRNAME, CURRENT_ENTRY_VERSION
 import voluptuous as vol
 from . import load_pixoo
 
@@ -88,6 +89,9 @@ class ConfigFlowHandler(config_entries.ConfigFlow, config_entries.OptionsFlow, d
                     "scan_interval"))): NumberSelector(
                     NumberSelectorConfig(min=1, max=9999, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="seconds")
                 ),
+                vol.Optional("fonts_dir",
+                             default=user_input.get("fonts_dir",
+                                                    self.entry_options.get("fonts_dir", FONTS_DIRNAME))): str,
                 vol.Optional("pages_data",
                              default=user_input.get("pages_data",
                                                     self.entry_options.get("pages_data"))): ObjectSelector(

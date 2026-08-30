@@ -21,21 +21,37 @@ from .pixoo64._colors import get_rgb, CSS4_COLORS, render_color
 from .const import DOMAIN, VERSION
 from .pages._pages import special_pages
 from .pixoo64._font import FONT_PICO_8, FONT_GICKO, FIVE_PIX, ELEVEN_PIX, CLOCK, PIX24
+from .pixoo64._custom_fonts import load_fonts, resolve_fonts_dir
 
 
 _LOGGER = logging.getLogger(__name__)
 
+# name -> (glyphs, force_uppercase). The built-in fonts only have upper-case
+# glyphs, so they keep forcing it; a custom font decides for itself.
+BUILTIN_FONTS = {
+    "gicko": (FONT_GICKO, True),
+    "five_pix": (FIVE_PIX, True),
+    "eleven_pix": (ELEVEN_PIX, True),
+    "clock": (CLOCK, True),
+    "pix24": (PIX24, True),
+    "pico_8": (FONT_PICO_8, True),
+}
+DEFAULT_FONT = "pico_8"
+
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities):
-    async_add_entities([ Pixoo64(config_entry=config_entry, pixoo=hass.data[DOMAIN][config_entry.entry_id]["pixoo"]) ], True)
+    fonts_dir = resolve_fonts_dir(hass, config_entry.options.get('fonts_dir'))
+    custom_fonts = await hass.async_add_executor_job(load_fonts, fonts_dir)
+    async_add_entities([ Pixoo64(config_entry=config_entry, pixoo=hass.data[DOMAIN][config_entry.entry_id]["pixoo"], custom_fonts=custom_fonts) ], True)
 
 
 class Pixoo64(Entity):
 
-    def __init__(self, pixoo: Pixoo, config_entry: ConfigEntry):
+    def __init__(self, pixoo: Pixoo, config_entry: ConfigEntry, custom_fonts: dict = None):
         # self._ip_address = ip_address
         self._pixoo = pixoo
         self._config_entry = config_entry
+        self._custom_fonts = custom_fonts or {}
         self._pages = self._config_entry.options.get('pages_data', [])
         self._scan_interval = timedelta(seconds=int(self._config_entry.options.get('scan_interval', timedelta(seconds=15))))
         self._current_page_index = -1  # Start at -1 so that the first page is 0.
@@ -143,11 +159,36 @@ class Pixoo64(Entity):
                 self.schedule_update_ha_state()
                 try:
                     await self.hass.async_add_executor_job(self._render_page, self.page)
-                except:
-                    _LOGGER.error("Error rendering page for %s. Is the device connected to the network?", self._pixoo.address)
+                except (requests.exceptions.RequestException, NewConnectionError, OSError) as err:
+                    _LOGGER.error("Error rendering page for %s. Is the device connected to the network? (%s)",
+                                  self._pixoo.address, err)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A failure that is not a transport error is a bug in the
+                    # page config or in this integration. Reporting it as a
+                    # network fault hides the traceback that explains it.
+                    _LOGGER.exception("Error rendering page for %s.", self._pixoo.address)
             else:
                 self._current_page_index = (self._current_page_index + 1) % len(self._pages)
                 iteration_count += 1
+
+    def _resolve_font(self, font_name):
+        """Return (glyphs, force_uppercase) for a font name.
+
+        Custom fonts win over built-ins, so a user can replace a built-in by
+        naming their file after it. An unknown name falls back to the default.
+        """
+        font_name = (font_name or "").lower()
+
+        custom = self._custom_fonts.get(font_name)
+        if custom is not None:
+            return custom["glyphs"], custom["force_uppercase"]
+
+        if font_name and font_name not in BUILTIN_FONTS:
+            _LOGGER.warning("Unknown font '%s'; falling back to %s.", font_name, DEFAULT_FONT)
+
+        return BUILTIN_FONTS.get(font_name, BUILTIN_FONTS[DEFAULT_FONT])
 
     def _render_page(self, page: dict):
         pixoo = self._pixoo
@@ -201,25 +242,16 @@ class Pixoo64(Entity):
                         _LOGGER.error("Template render error: %s", e)
                         rendered_text = "Template Error"
 
-                    font_name = component.get('font', "").lower()
-                    if font_name == "gicko":
-                        font = FONT_GICKO
-                    elif font_name == "five_pix":
-                        font = FIVE_PIX
-                    elif font_name == "eleven_pix":
-                        font = ELEVEN_PIX
-                    elif font_name == "clock":
-                        font = CLOCK
-                    elif font_name == "pix24":
-                        font = PIX24
-                    else:
-                        font = FONT_PICO_8  # Font by default.
+                    font, force_uppercase = self._resolve_font(component.get('font', ""))
 
                     rendered_color = render_color(component.get('color'), self.hass, variables=rendered_variables)
 
                     align = component.get('align', "").lower()
 
-                    pixoo.draw_text(rendered_text.upper(), tuple(component['position']), rendered_color, font, align)
+                    if force_uppercase:
+                        rendered_text = rendered_text.upper()
+
+                    pixoo.draw_text(rendered_text, tuple(component['position']), rendered_color, font, align)
 
                 elif component['type'] == "image":
                     try:

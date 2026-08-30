@@ -752,6 +752,15 @@ def retrieve_glyph_width(character, font):
     if character in font:
         return font[character][-1]
 
+    # draw_text substitutes '?' for a missing glyph and advances by that
+    # glyph's real width, so measuring has to agree. Returning 0 made
+    # get_text_width under-report any line containing a character the font
+    # lacks, which offset align=center by half the error and could push the
+    # line off the panel: in five_pix, "AC/DC" measured 18 against 22 drawn.
+    fallback = font.get("?")
+    if fallback is not None:
+        return fallback[-1]
+
     return 0
 
 def supported_characters():
