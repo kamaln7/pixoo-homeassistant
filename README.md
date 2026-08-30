@@ -747,10 +747,18 @@ field: `A` above is 4px wide and `!` is 1px.
 | `height`          |    No    | Cross-checks the rows; the height is taken from the glyphs themselves.          |
 | `force_uppercase` |    No    | `true` for a font with no lower-case glyphs. Defaults to `false`.               |
 
-Every glyph must be the same number of rows tall, because `draw_text` takes its
-line height from the `0` glyph and applies it to every line. `?` is what gets
-drawn in place of any character the font lacks. Fonts are validated when they
-load, and a font that fails validation is skipped with the reason in the log.
+Glyphs need not all be the same height. Each is drawn downward from the text
+position and only lit pixels are plotted, so a trailing blank row renders
+exactly the same as no row at all, and a glyph without a descender need not
+carry the padding. Leading blank rows are what put glyphs on a shared baseline,
+so those must be kept — every glyph is top-aligned at the same y.
+
+The `0` glyph is special: `draw_text` takes the line spacing for every line from
+it alone, so keep `0` at the font's full height or multi-line text will be
+spaced too tightly. `?` is drawn in place of any character the font lacks.
+
+Fonts are validated when they load, and one that fails is skipped with the
+reason in the log.
 
 #### Converting an existing font
 

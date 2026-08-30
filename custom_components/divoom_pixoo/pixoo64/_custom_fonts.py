@@ -31,11 +31,16 @@ Rules, all of which are checked at load time so a bad file fails loudly instead
 of drawing nonsense:
 
 * every row within a glyph must be the same length,
-* every glyph in the font must have the same number of rows, because
-  ``draw_text`` derives its line height from the ``0`` glyph and applies it to
-  every line,
-* ``height`` is optional and only cross-checks the rows,
-* a ``0`` glyph must exist, for that same reason.
+* ``height`` is optional and only cross-checks the tallest glyph,
+* a ``0`` glyph must exist, because ``draw_text`` takes the line spacing for
+  every line from it.
+
+Glyphs need not all be the same height. ``draw_character`` plots only lit pixels
+and draws downward from the text position, so trailing blank rows render exactly
+the same as no rows at all and a glyph without a descender need not carry the
+padding. Leading blank rows are a different matter: every glyph is top-aligned
+at the same y, so those are what put glyphs on a shared baseline and must be
+kept.
 
 Internally the integration wants a flat row-major list of bits with the cell
 width appended, so this module compiles to that on load.
@@ -105,15 +110,10 @@ def compile_font(font_name, payload):
         heights.add(len(rows))
         glyphs[character] = _compile_glyph(rows)
 
-    if len(heights) > 1:
-        _LOGGER.error("Custom font '%s': glyphs are %s rows tall; every glyph must be the same height.",
-                      font_name, sorted(heights))
-        return None, False
-
-    height = heights.pop()
+    height = max(heights)
     declared = payload.get("height")
     if declared is not None and declared != height:
-        _LOGGER.error("Custom font '%s': declares height %s but its glyphs are %d rows tall.",
+        _LOGGER.error("Custom font '%s': declares height %s but its tallest glyph is %d rows.",
                       font_name, declared, height)
         return None, False
 
@@ -121,6 +121,26 @@ def compile_font(font_name, payload):
         _LOGGER.error("Custom font '%s': needs a '0' glyph, which draw_text uses to measure line height.",
                       font_name)
         return None, False
+
+    # Glyphs may differ in height. draw_character plots only lit pixels and
+    # draws downward from the text position, so trailing blank rows render
+    # identically to no rows at all -- a descender-less glyph simply need not
+    # carry the padding. What must be consistent is the TOP of the cell: every
+    # glyph is top-aligned at the same y, so leading blank rows are what put
+    # glyphs on a shared baseline and cannot be dropped.
+    if len(heights) > 1:
+        _LOGGER.debug("Custom font '%s': glyph heights vary (%s); assuming a shared top origin.",
+                      font_name, sorted(heights))
+
+    # draw_text takes the line spacing for EVERY line from the '0' glyph alone,
+    # so a '0' shorter than the font's tallest glyph tightens multi-line text
+    # and can overlap descenders from the line above.
+    if len(glyphs["0"]) - 1 < height:
+        _LOGGER.warning(
+            "Custom font '%s': the '0' glyph is %d rows but the tallest is %d. draw_text derives line "
+            "spacing from '0', so multi-line text will be spaced %d rows apart and may overlap.",
+            font_name, len(glyphs["0"]) - 1, height, len(glyphs["0"]) - 1,
+        )
 
     if "?" not in glyphs:
         # Not fatal, but draw_text falls back to '?' for anything missing.

@@ -36,10 +36,28 @@ class TestCompileFont(unittest.TestCase):
 
         self.assertTrue(compile_font("t", payload)[1])
 
-    def test_rejects_glyphs_of_differing_heights(self):
-        # draw_text measures line height from '0' alone, so mixed heights would
-        # silently misplace text rather than fail.
-        self.assertIsNone(compile_font("t", font(A=["#.#", ".#."]))[0])
+    def test_allows_glyphs_of_differing_heights(self):
+        # draw_character plots only lit pixels and draws downward, so a trailing
+        # blank row and no row at all render identically. A glyph with no
+        # descender may simply be shorter.
+        glyphs, _ = compile_font("t", font(A=["#.#", ".#."]))
+
+        self.assertIsNotNone(glyphs)
+        self.assertEqual([1, 0, 1, 0, 1, 0, 3], glyphs["A"])
+
+    def test_a_short_zero_is_allowed_but_warned_about(self):
+        # '0' alone sets the line spacing for every line.
+        with self.assertLogs("custom_components.divoom_pixoo.pixoo64._custom_fonts", "WARNING") as logs:
+            glyphs, _ = compile_font("t", {"glyphs": {"0": ["#", "#"], "?": ["#", "#", "#"], "g": ["#", "#", "#"]}})
+
+        self.assertIsNotNone(glyphs)
+        self.assertIn("line spacing", "".join(logs.output))
+
+    def test_rejects_a_declared_height_that_is_not_the_tallest_glyph(self):
+        payload = font(A=["#.#", ".#.", "#.#", "#.#"])
+        payload["height"] = 3
+
+        self.assertIsNone(compile_font("t", payload)[0])
 
     def test_rejects_ragged_rows(self):
         self.assertIsNone(compile_font("t", font(A=["#.#", ".#", "#.#"]))[0])
