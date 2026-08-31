@@ -103,18 +103,39 @@ def parse_ttf(path, size, chars):
     ascent, descent = font.getmetrics()
     height = ascent + descent
 
-    glyphs = {}
-    for character in chars:
+    def raster(character):
         try:
             advance = int(round(font.getlength(character)))
         except AttributeError:  # very old Pillow
             advance = font.getsize(character)[0]
+        image = Image.new("1", (advance + 8, height), 0)
+        ImageDraw.Draw(image).text((0, 0), character, font=font, fill=1)
+        return advance, image
 
-        cell_w = max(advance - 1, 1)
-        image = Image.new("1", (cell_w + 4, height), 0)
-        draw = ImageDraw.Draw(image)
-        # Pillow renders bitmap-derived faces unantialiased in mode "1".
-        draw.text((0, 0), character, font=font, fill=1)
+    # A character the font has no glyph for renders as .notdef, usually a
+    # hollow box. Emitting those would put boxes on the panel; leaving them out
+    # lets the integration fall back to '?' instead. U+FFFF is not assigned, so
+    # whatever it draws IS this font's .notdef.
+    notdef_image = raster("\uffff")[1]
+    # Some fonts draw .notdef as nothing at all. Then it is indistinguishable
+    # from a space and the check has to be switched off, or every space in
+    # every string would be dropped.
+    notdef = notdef_image.tobytes() if notdef_image.getbbox() else None
+
+    glyphs = {}
+    skipped = []
+    for character in chars:
+        advance, probe = raster(character)
+        if notdef is not None and probe.tobytes() == notdef:
+            skipped.append(character)
+            continue
+
+        # Rendered into a generous canvas: a glyph's ink can extend past its
+        # advance, and sizing the cell from the advance alone clips it.
+        image = probe
+        box = image.getbbox()
+        ink_right = box[2] if box else 0
+        cell_w = max(advance - 1, ink_right, 1)
 
         cell = _blank(cell_w, height)
         pixels = image.load()
@@ -125,6 +146,27 @@ def parse_ttf(path, size, chars):
         glyphs[character] = _rows_to_strings(cell)
 
     return glyphs, height
+
+
+def tighten_columns(glyphs):
+    """Strip blank columns from each side of every glyph.
+
+    A face's own left side bearing lands here as leading blank columns, and
+    draw_text already adds a column of spacing between characters, so carrying
+    the bearing too spaces the text a pixel wider than the font intends.
+    Glyphs that are entirely blank -- space, most obviously -- are left alone,
+    since their width is the whole point of them.
+    """
+    out = {}
+    for character, rows in glyphs.items():
+        cols = len(rows[0])
+        inked = [x for x in range(cols) if any(row[x] != "." for row in rows)]
+        if not inked:
+            out[character] = rows
+            continue
+        first, last = inked[0], inked[-1]
+        out[character] = [row[first:last + 1] for row in rows]
+    return out
 
 
 def trim_blank_rows(glyphs):
@@ -164,6 +206,9 @@ def main():
     parser.add_argument("--preview", action="store_true", help="print a few glyphs as ASCII and exit")
     parser.add_argument("--trim", action="store_true",
                         help="drop rows blank across every glyph, reclaiming the cell's padding")
+    parser.add_argument("--tight", action="store_true",
+                        help="strip each glyph's blank side columns, so only draw_text's own "
+                             "one column of spacing separates characters")
     args = parser.parse_args()
 
     chars = list(args.chars) if args.chars else PRINTABLE
@@ -180,6 +225,8 @@ def main():
 
     if args.trim:
         glyphs, height = trim_blank_rows(glyphs)
+    if args.tight:
+        glyphs = tighten_columns(glyphs)
     for required in ("0", "?"):
         if required not in glyphs:
             print(f"warning: no '{required}' glyph; the integration needs it", file=sys.stderr)

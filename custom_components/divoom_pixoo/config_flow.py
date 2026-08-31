@@ -5,8 +5,8 @@ from homeassistant.helpers.selector import ObjectSelector, ObjectSelectorConfig,
     DurationSelector, DurationSelectorConfig, NumberSelector, NumberSelectorConfig, NumberSelectorMode, SelectSelector, \
     SelectSelectorConfig, SelectSelectorMode
 
-from .const import DOMAIN
-from .pixoo64._custom_fonts import FONTS_DIRNAME, CURRENT_ENTRY_VERSION
+from .const import DOMAIN, CURRENT_ENTRY_VERSION
+from .pixoo64._custom_fonts import FONTS_DIRNAME
 import voluptuous as vol
 from . import load_pixoo
 
