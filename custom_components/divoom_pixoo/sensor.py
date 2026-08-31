@@ -60,6 +60,7 @@ class Pixoo64(Entity):
         self._attr_extra_state_attributes = {'TotalPages': len(self._pages)}
         _LOGGER.debug("All pages for %s: %s", self._pixoo.address, self._pages)
         self._update_task: None | Task = None
+        self._playing_gif_url = None  # url of the gif animation the device is currently looping
 
     async def async_added_to_hass(self):
         platform = entity_platform.async_get_current_platform()
@@ -195,6 +196,9 @@ class Pixoo64(Entity):
         pixoo.clear()
 
         page_type = page['page_type'].lower()
+        if page_type != "gif":
+            # Anything else drawn to the device replaces the looping animation.
+            self._playing_gif_url = None
         if page_type in special_pages:
             special_pages[page_type](pixoo, self.hass, page)
             pixoo.push()
@@ -225,7 +229,13 @@ class Pixoo64(Entity):
             except TemplateError as e:
                 _LOGGER.error(f"Error rendering gif url template: {e}")
                 gif_url = page['gif_url']
-            pixoo.play_gif(gif_url)
+            # The device loops a pushed animation on its own, so an unchanged
+            # url needs no traffic at all. play_gif()/Device/PlayTFGif is
+            # deliberately not used — see play_net_gif's docstring.
+            if gif_url != self._playing_gif_url:
+                pixoo.play_net_gif(gif_url)
+                pixoo.set_channel(3)
+                self._playing_gif_url = gif_url
         elif page_type in ["custom", "components"]:
             variables = page.get('variables', {})
             rendered_variables = {}

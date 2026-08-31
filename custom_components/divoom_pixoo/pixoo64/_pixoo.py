@@ -2,9 +2,10 @@ import base64
 import json
 from datetime import timedelta
 from enum import IntEnum
+from io import BytesIO
 
 import requests
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageSequence
 
 from ._colors import get_rgb
 from ._font import retrieve_glyph, retrieve_glyph_width, FONT_GICKO, FONT_PICO_8, FIVE_PIX, ELEVEN_PIX, CLOCK, PIX24
@@ -370,6 +371,53 @@ class Pixoo:
         data = response.json()
         if data['error_code'] != 0:
             self.__error(data)
+
+    def play_net_gif(self, gif_url):
+        """Fetch a gif over HTTP and push its frames as a Draw/SendHttpGif
+        animation, which the device then loops on its own.
+
+        This replaces play_gif() for network urls: Device/PlayTFGif with
+        FileType 2 is broken on current Pixoo 64 firmware — the device
+        downloads the file, goes unresponsive for ~25s, and lands on the
+        Faces channel without ever displaying the gif.
+        """
+        response = requests.get(gif_url, timeout=self.timeout)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content))
+
+        frames = []
+        durations = []
+        for frame in ImageSequence.Iterator(image):
+            rgb = frame.convert('RGB')
+            if rgb.size != (self.size, self.size):
+                rgb = ImageOps.fit(rgb, (self.size, self.size), Image.NEAREST)
+            frames.append(rgb.tobytes())
+            durations.append(frame.info.get('duration', 100))
+        # The device may crash above ~40 frames; longer gifs get truncated.
+        frames = frames[:40]
+        durations = durations[:len(frames)]
+        if not frames:
+            raise ValueError(f'no frames decoded from {gif_url}')
+        # PicSpeed is one global ms-per-frame value; use the median duration.
+        speed = max(sorted(durations)[len(durations) // 2], 30)
+
+        self.__reset_counter()
+        for offset, frame_data in enumerate(frames):
+            response = requests.post(self.__url, json.dumps({
+                'Command': 'Draw/SendHttpGif',
+                'PicNum': len(frames),
+                'PicWidth': self.size,
+                'PicOffset': offset,
+                'PicID': 1,
+                'PicSpeed': speed,
+                'PicData': str(base64.b64encode(bytearray(frame_data)).decode())
+            }), timeout=self.timeout)
+            data = response.json()
+            if data['error_code'] != 0:
+                self.__error(data)
+                return
+        # Keep the single-frame push() counter consistent with the reset.
+        self.__counter = 1
 
     def set_face(self, face_id):
         self.set_clock(face_id)
